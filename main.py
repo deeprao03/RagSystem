@@ -1,14 +1,10 @@
-from app.loaders.pdf_loader import get_extracted_text_preview, load_pdf_documents
-from app.llm.generator import generate_answer_with_ollama
-from app.processing.chunker import chunk_preview, split_documents_into_chunks
-from app.processing.structure_extractor import extract_sections_from_documents
-from app.retrieval.hybrid_router import classify_query
-from app.retrieval.structured_retriever import structured_section_retrieval
-from app.retrieval.vector_store import build_faiss_index, similarity_search
+from app.loaders.pdf_loader import get_extracted_text_preview
+from app.pipeline import prepare_hybrid_resources, retrieve_context
 
 
 def run_step2_demo(pdf_path: str) -> None:
-    documents = load_pdf_documents(pdf_path)
+    resources = prepare_hybrid_resources(pdf_path)
+    documents = resources["documents"]
     print(f"Loaded {len(documents)} pages from: {pdf_path}")
 
     preview = get_extracted_text_preview(documents)
@@ -17,30 +13,37 @@ def run_step2_demo(pdf_path: str) -> None:
 
 
 def run_step3_demo(pdf_path: str) -> None:
-    documents = load_pdf_documents(pdf_path)
-    chunks = split_documents_into_chunks(documents, chunk_size=1000, chunk_overlap=200)
+    resources = prepare_hybrid_resources(pdf_path)
+    documents = resources["documents"]
+    chunks = resources["chunks"]
 
     print(f"Loaded {len(documents)} pages from: {pdf_path}")
     print(f"Created {len(chunks)} chunks")
     print("Chunk config: chunk_size=1000, chunk_overlap=200")
 
     print("\n--- Sample Chunks ---\n")
-    for idx, chunk_text in chunk_preview(chunks, n=3, max_chars=300):
+    for idx, chunk in enumerate(chunks[:3], start=1):
+        chunk_text = chunk.page_content.strip().replace("\n", " ")[:300]
         print(f"Chunk {idx}: {chunk_text}\n")
 
 
 def run_step4_demo(pdf_path: str) -> None:
-    documents = load_pdf_documents(pdf_path)
-    chunks = split_documents_into_chunks(documents, chunk_size=1000, chunk_overlap=200)
+    resources = prepare_hybrid_resources(pdf_path)
+    documents = resources["documents"]
+    chunks = resources["chunks"]
+    vector_store = resources["vector_store"]
 
     print(f"Loaded {len(documents)} pages from: {pdf_path}")
     print(f"Created {len(chunks)} chunks")
     print("Building FAISS index...")
 
-    vector_store = build_faiss_index(chunks)
-
     query = "What does this book say about financial education?"
-    results = similarity_search(vector_store, query=query, k=3)
+    _, results = retrieve_context(
+        query=query,
+        sections=resources["sections"],
+        vector_store=vector_store,
+        top_k=3,
+    )
 
     print("\n--- Similarity Search Results ---\n")
     print(f"Query: {query}\n")
@@ -52,12 +55,18 @@ def run_step4_demo(pdf_path: str) -> None:
 
 
 def run_step5_demo(pdf_path: str) -> None:
-    documents = load_pdf_documents(pdf_path)
-    chunks = split_documents_into_chunks(documents, chunk_size=1000, chunk_overlap=200)
-    vector_store = build_faiss_index(chunks)
+    resources = prepare_hybrid_resources(pdf_path)
+    vector_store = resources["vector_store"]
+    documents = resources["documents"]
+    chunks = resources["chunks"]
 
     query = "What does this book say about financial education?"
-    retrieved_docs = similarity_search(vector_store, query=query, k=3)
+    _, retrieved_docs = retrieve_context(
+        query=query,
+        sections=resources["sections"],
+        vector_store=vector_store,
+        top_k=3,
+    )
 
     print("\n--- Retrieved Chunks ---\n")
     for idx, doc in enumerate(retrieved_docs, start=1):
@@ -66,6 +75,8 @@ def run_step5_demo(pdf_path: str) -> None:
         print(f"Chunk {idx} (page {page}): {snippet}\n")
 
     print("Generating answer with Ollama...\n")
+    from app.llm.generator import generate_answer_with_ollama
+
     answer = generate_answer_with_ollama(query, retrieved_docs)
 
     print("--- Final Answer ---\n")
@@ -73,8 +84,9 @@ def run_step5_demo(pdf_path: str) -> None:
 
 
 def run_step6_demo(pdf_path: str) -> None:
-    documents = load_pdf_documents(pdf_path)
-    sections = extract_sections_from_documents(documents)
+    resources = prepare_hybrid_resources(pdf_path)
+    documents = resources["documents"]
+    sections = resources["sections"]
 
     print(f"Loaded {len(documents)} pages from: {pdf_path}")
     print(f"Extracted {len(sections)} sections")
@@ -90,8 +102,11 @@ def run_step6_demo(pdf_path: str) -> None:
 
 
 def run_step7_demo(pdf_path: str) -> None:
-    documents = load_pdf_documents(pdf_path)
-    sections = extract_sections_from_documents(documents)
+    from app.retrieval.hybrid_router import classify_query
+
+    resources = prepare_hybrid_resources(pdf_path)
+    documents = resources["documents"]
+    sections = resources["sections"]
 
     sample_queries = [
         "What does the book say about financial education?",
@@ -111,10 +126,11 @@ def run_step7_demo(pdf_path: str) -> None:
 
 
 def run_step8_demo(pdf_path: str) -> None:
-    documents = load_pdf_documents(pdf_path)
-    chunks = split_documents_into_chunks(documents, chunk_size=1000, chunk_overlap=200)
-    sections = extract_sections_from_documents(documents)
-    vector_store = build_faiss_index(chunks)
+    resources = prepare_hybrid_resources(pdf_path)
+    documents = resources["documents"]
+    chunks = resources["chunks"]
+    sections = resources["sections"]
+    vector_store = resources["vector_store"]
 
     sample_queries = [
         "What is mentioned in chapter 1?",
@@ -126,12 +142,12 @@ def run_step8_demo(pdf_path: str) -> None:
     print("\n--- Hybrid Retrieval Demo ---\n")
 
     for query in sample_queries:
-        route = classify_query(query, sections)
-
-        if route == "structured":
-            results = structured_section_retrieval(query, sections, top_k=3)
-        else:
-            results = similarity_search(vector_store, query=query, k=3)
+        route, results = retrieve_context(
+            query=query,
+            sections=sections,
+            vector_store=vector_store,
+            top_k=3,
+        )
 
         print(f"Query: {query}")
         print(f"Route used: {route}")

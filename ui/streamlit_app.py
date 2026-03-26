@@ -7,13 +7,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import streamlit as st
 
-from app.loaders.pdf_loader import load_pdf_documents
 from app.llm.generator import generate_answer_with_ollama
-from app.processing.chunker import split_documents_into_chunks
-from app.processing.structure_extractor import extract_sections_from_documents
-from app.retrieval.hybrid_router import classify_query
-from app.retrieval.structured_retriever import structured_section_retrieval
-from app.retrieval.vector_store import build_faiss_index, similarity_search
+from app.pipeline import prepare_hybrid_resources, retrieve_context
 
 
 DATA_RAW_DIR = Path("data/raw")
@@ -27,20 +22,17 @@ def _save_uploaded_pdf(uploaded_file) -> Path:
 
 
 def _prepare_indexes(pdf_path: Path):
-    documents = load_pdf_documents(str(pdf_path))
-    chunks = split_documents_into_chunks(documents, chunk_size=1000, chunk_overlap=200)
-    sections = extract_sections_from_documents(documents)
-    vector_store = build_faiss_index(chunks)
-    return documents, chunks, sections, vector_store
+    resources = prepare_hybrid_resources(str(pdf_path))
+    return (
+        resources["documents"],
+        resources["chunks"],
+        resources["sections"],
+        resources["vector_store"],
+    )
 
 
 def _retrieve_context(query: str, sections: dict, vector_store):
-    route = classify_query(query, sections)
-    if route == "structured":
-        docs = structured_section_retrieval(query, sections, top_k=3)
-    else:
-        docs = similarity_search(vector_store, query=query, k=3)
-    return route, docs
+    return retrieve_context(query, sections, vector_store, top_k=3)
 
 
 st.set_page_config(page_title="Hybrid RAG Assistant", page_icon="📄", layout="wide")
